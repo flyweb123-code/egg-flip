@@ -1,0 +1,391 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>
+<title>계란후라이 플립</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Do+Hyeon&family=IBM+Plex+Sans+KR:wght@400;600&display=swap">
+<style>
+/* Layout: the whole screen is a square cast-iron pan; HUD floats on the rim, overlays sit centered. */
+:root{
+  --iron:#1d1b1a; --iron-hi:#3a3633; --rim:#0f0e0d;
+  --cream:#fff7e8; --yolk:#ffb21e; --gold:#e3a43c; --burnt:#5a2c10;
+  --text:#f6efe4; --muted:#b9ada0; --ok:#7fd18b; --bad:#ff7a59;
+  --display:"Do Hyeon","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  --body:"IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%;margin:0;overflow:hidden;background:var(--rim);color:var(--text);font-family:var(--body);
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:none;overscroll-behavior:none}
+[hidden]{display:none!important}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block}
+.hud{position:fixed;left:0;right:0;top:0;padding-top:calc(env(safe-area-inset-top,0px) + 14px);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;gap:12px;align-items:flex-start;justify-content:space-between;pointer-events:none}
+.bars{display:grid;gap:6px;flex:1;max-width:260px}
+.bar{display:grid;grid-template-columns:4.4em 1fr;white-space:nowrap;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.bar.up span{color:var(--text)}
+.track{position:relative;height:9px;border-radius:5px;background:#ffffff14;overflow:hidden}
+.track i{position:absolute;inset:0 auto 0 0;width:0;border-radius:5px;background:var(--gold)}
+.track b{position:absolute;top:0;bottom:0;left:58.3%;width:25%;border-left:1px solid #ffffff55;border-right:1px solid #ffffff55}
+.flips{font-family:var(--display);font-size:28px;line-height:1;text-align:right}
+.flips small{display:block;font-family:var(--body);font-size:11px;color:var(--muted)}
+.foot{position:fixed;left:0;right:0;bottom:0;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 14px);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;gap:10px;justify-content:space-between;align-items:center}
+.tip{font-size:12px;color:var(--muted);pointer-events:none;min-width:0}
+button{font-family:var(--display);font-size:20px;border:0;border-radius:14px;padding:12px 22px;cursor:pointer;
+  background:var(--yolk);color:#2a1a05}
+button.ghost{background:#ffffff1a;color:var(--text);font-size:16px;padding:10px 16px}
+button:focus-visible{outline:3px solid var(--cream);outline-offset:2px}
+.overlay{position:fixed;inset:0;display:grid;place-items:center;background:#0d0c0bcc;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.card{max-width:340px;display:grid;gap:14px;text-align:center}
+.card h1{font-family:var(--display);font-weight:400;font-size:44px;margin:0;line-height:1;color:var(--yolk);text-wrap:balance}
+.card h2{font-family:var(--display);font-weight:400;font-size:34px;margin:0;line-height:1.1;text-wrap:balance}
+.card p{margin:0;line-height:1.6;color:var(--muted);font-size:14px}
+.card ol{margin:0;padding:0 0 0 1.2em;text-align:left;line-height:1.7;font-size:14px}
+.note{font-size:12px;color:var(--bad)}
+.toast{position:fixed;left:50%;top:42%;transform:translate(-50%,-50%);font-family:var(--display);font-size:46px;
+  color:var(--cream);text-shadow:0 3px 14px #000;pointer-events:none;opacity:0;transition:opacity .25s}
+.toast.on{opacity:1}
+</style>
+
+<canvas id="c"></canvas>
+
+<div class="hud">
+  <div class="bars">
+    <div class="bar" id="barA"><span>노른자면</span><div class="track"><b></b><i id="fillA"></i></div></div>
+    <div class="bar" id="barB"><span>뒷면</span><div class="track"><b></b><i id="fillB"></i></div></div>
+  </div>
+  <div class="flips"><span id="flipN">0</span><small>뒤집기</small></div>
+</div>
+
+<div class="foot">
+  <div class="tip" id="tip">폰을 기울여 미끄러뜨리고, 손목 스냅으로 뒤집어요</div>
+  <button class="ghost" id="serveBtn" hidden>접시에 담기</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="overlay" id="intro">
+  <div class="card">
+    <h1>계란후라이 플립</h1>
+    <p>지금 들고 있는 폰이 기름 두른 프라이팬이에요.</p>
+    <ol>
+      <li>폰을 눕혀서 기울이면 계란이 미끄러져요.</li>
+      <li>프라이팬 뒤집듯 손목을 위로 툭 채면 계란이 뒤집혀요.</li>
+      <li>양쪽 다 노릇하게(밝은 구간) 익으면 접시에 담으세요.</li>
+    </ol>
+    <button id="startBtn">팬 달구기</button>
+    <p id="sensorNote" class="note" hidden></p>
+  </div>
+</div>
+
+<div class="overlay" id="result" hidden>
+  <div class="card">
+    <h2 id="resTitle"></h2>
+    <p id="resText"></p>
+    <button id="againBtn">한 판 더</button>
+  </div>
+</div>
+
+<script>
+(() => {
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR=Math.min(window.devicePixelRatio||1,2);
+  W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;ctx.setTransform(DPR,0,0,DPR,0,0);
+  egg.r=Math.min(W,H)*0.2;
+  bakeShape();
+}
+
+// ---------- state ----------
+const egg={x:0,y:0,vx:0,vy:0,rot:0,vr:0,r:80,up:0, // up: 0 = 노른자면 위, 1 = 뒷면 위
+  flipT:-1, cook:[0,0], wobble:0};
+let gx=0, gy=0;          // tilt-derived acceleration (px/s²)
+let running=false, flips=0, mode='none', lastSensor=0, finished=false;
+const COOK_RATE=8.5;      // % per second on the down side
+const GOLD_LO=70, GOLD_HI=100, BURNT=130;
+
+// irregular white outline, baked per size
+let shape=[];
+function bakeShape(){
+  shape=[];const n=48,seed=[0.13,0.29,0.07,0.21,0.17];
+  for(let i=0;i<n;i++){const a=i/n*Math.PI*2;
+    let k=1+0.09*Math.sin(a*3+seed[0]*10)+0.06*Math.sin(a*5+seed[1]*20)+0.04*Math.sin(a*7+1.3)+0.03*Math.sin(a*11+seed[2]*30);
+    shape.push([Math.cos(a)*k,Math.sin(a)*k*0.92]);}
+}
+function blobPath(r){
+  ctx.beginPath();
+  for(let i=0;i<shape.length;i++){
+    const p=shape[i],q=shape[(i+1)%shape.length];
+    const mx=(p[0]+q[0])/2*r,my=(p[1]+q[1])/2*r;
+    if(i===0)ctx.moveTo(mx,my);else ctx.quadraticCurveTo(p[0]*r,p[1]*r,mx,my);
+  }
+  const p=shape[0],q=shape[1];ctx.quadraticCurveTo(p[0]*r,p[1]*r,(p[0]+q[0])/2*r,(p[1]+q[1])/2*r);
+  ctx.closePath();
+}
+function mix(a,b,t){return a.map((v,i)=>Math.round(v+(b[i]-v)*t));}
+function brown(c){ // c: cook % → underside color
+  const white=[255,250,238],gold=[232,170,70],dark=[110,58,22],black=[34,22,14];
+  if(c<GOLD_LO)return mix(white,gold,Math.pow(c/GOLD_LO,1.4));
+  if(c<BURNT)return mix(gold,dark,(c-GOLD_LO)/(BURNT-GOLD_LO));
+  return mix(dark,black,Math.min(1,(c-BURNT)/40));
+}
+const rgb=a=>`rgb(${a[0]},${a[1]},${a[2]})`;
+
+// ---------- sensors ----------
+function screenAngle(){
+  if(screen.orientation&&typeof screen.orientation.angle==='number')return screen.orientation.angle;
+  return typeof window.orientation==='number'?window.orientation:0;
+}
+function onOrient(e){
+  if(e.beta==null||e.gamma==null)return;
+  lastSensor=performance.now(); if(mode!=='sensor'){mode='sensor';setTip();}
+  const b=Math.max(-90,Math.min(90,e.beta))*Math.PI/180, g=e.gamma*Math.PI/180;
+  const dx=Math.sin(g)*Math.cos(b), dy=Math.sin(b);
+  const a=screenAngle()*Math.PI/180;
+  const sx=dx*Math.cos(a)+dy*Math.sin(a), sy=-dx*Math.sin(a)+dy*Math.cos(a);
+  const G=Math.min(W,H)*5.2;
+  gx=sx*G; gy=sy*G;
+}
+let lastFlickAt=0;
+function onMotion(e){
+  const rr=e.rotationRate||{}, ac=e.acceleration||{};
+  const rot=Math.max(Math.abs(rr.beta||0),Math.abs(rr.gamma||0));
+  const az=Math.abs(ac.z||0), ay=Math.abs(ac.y||0);
+  if(rot>330||az>14||(az>9&&rot>180)||ay>17){
+    const now=performance.now();
+    if(now-lastFlickAt>700){lastFlickAt=now;flip();}
+  }
+}
+async function askSensors(){
+  const res=[];
+  try{
+    if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function')
+      res.push(await DeviceOrientationEvent.requestPermission());
+    if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function')
+      res.push(await DeviceMotionEvent.requestPermission());
+  }catch(err){res.push('error');}
+  addEventListener('deviceorientation',onOrient);
+  addEventListener('devicemotion',onMotion);
+  return res.every(r=>r==='granted');
+}
+
+// ---------- touch fallback ----------
+let drag=null;
+cv.addEventListener('pointerdown',e=>{drag={x0:e.clientX,y0:e.clientY,x:e.clientX,y:e.clientY,t:performance.now(),hist:[[e.clientY,performance.now()]]};});
+cv.addEventListener('pointermove',e=>{if(!drag)return;drag.x=e.clientX;drag.y=e.clientY;drag.hist.push([e.clientY,performance.now()]);if(drag.hist.length>6)drag.hist.shift();});
+function endDrag(){
+  if(!drag)return;
+  const h=drag.hist,a=h[0],b=h[h.length-1];
+  const v=(a[0]-b[0])/Math.max(1,b[1]-a[1]); // px/ms upward
+  if(v>1.1&&(a[0]-b[0])>40)flip();
+  drag=null;
+}
+cv.addEventListener('pointerup',endDrag);cv.addEventListener('pointercancel',endDrag);
+let keys={};
+addEventListener('keydown',e=>{keys[e.key]=true;if(e.key===' '){e.preventDefault();flip();}});
+addEventListener('keyup',e=>{keys[e.key]=false;});
+
+function setTip(){
+  $('tip').textContent = mode==='sensor'
+    ? '폰을 기울여 미끄러뜨리고, 손목 스냅으로 뒤집어요'
+    : '화면을 끌어서 기울이고, 위로 휙 쓸어올리면 뒤집혀요';
+}
+
+// ---------- game ----------
+function flip(){
+  if(!running||egg.flipT>=0)return;
+  egg.flipT=0; flips++; $('flipN').textContent=flips;
+  egg.vr+= (Math.random()-.5)*4;
+  egg.vx*=0.6; egg.vy*=0.6;
+  try{navigator.vibrate&&navigator.vibrate(18);}catch(_){}
+}
+function toast(t){const el=$('toast');el.textContent=t;el.classList.add('on');clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove('on'),900);}
+
+function reset(){
+  egg.x=W/2;egg.y=H*0.55;egg.vx=egg.vy=0;egg.rot=Math.random()*6;egg.vr=0;egg.up=0;egg.flipT=-1;egg.cook=[0,0];egg.wobble=0;
+  flips=0;$('flipN').textContent='0';finished=false;$('serveBtn').hidden=true;
+}
+
+function step(dt){
+  let ax=gx, ay=gy;
+  if(mode!=='sensor'){
+    if(drag){const s=Math.min(W,H)*0.02;ax=(drag.x-drag.x0)*s;ay=(drag.y-drag.y0)*s;}
+    else{ax=ay=0;}
+    const k=Math.min(W,H)*3;
+    if(keys.ArrowLeft)ax-=k;if(keys.ArrowRight)ax+=k;if(keys.ArrowUp)ay-=k;if(keys.ArrowDown)ay+=k;
+  }
+  const air=egg.flipT>=0;
+  if(!air){
+    // oily pan: tiny static grip, low kinetic drag
+    const mag=Math.hypot(ax,ay), grip=Math.min(W,H)*0.25;
+    if(mag>grip||Math.hypot(egg.vx,egg.vy)>4){egg.vx+=ax*dt;egg.vy+=ay*dt;}
+    const drag_=Math.exp(-0.55*dt);egg.vx*=drag_;egg.vy*=drag_;
+    egg.vr*=Math.exp(-1.2*dt);
+    egg.vr+=(egg.vx*ay-egg.vy*ax)*0.0000004*dt;
+  }else{
+    egg.vx*=Math.exp(-0.3*dt);egg.vy*=Math.exp(-0.3*dt);
+  }
+  egg.x+=egg.vx*dt;egg.y+=egg.vy*dt;egg.rot+=egg.vr*dt;
+
+  // walls of the pan
+  const m=Math.min(W,H)*0.06, rr=egg.r*0.9, e=0.32;
+  const minX=m+rr,maxX=W-m-rr,minY=m+rr,maxY=H-m-rr;
+  if(egg.x<minX){egg.x=minX;if(egg.vx<0){egg.vr+=egg.vy*0.004;egg.vx=-egg.vx*e;egg.wobble=Math.min(1,egg.wobble+0.5);}}
+  if(egg.x>maxX){egg.x=maxX;if(egg.vx>0){egg.vr-=egg.vy*0.004;egg.vx=-egg.vx*e;egg.wobble=Math.min(1,egg.wobble+0.5);}}
+  if(egg.y<minY){egg.y=minY;if(egg.vy<0){egg.vr-=egg.vx*0.004;egg.vy=-egg.vy*e;egg.wobble=Math.min(1,egg.wobble+0.5);}}
+  if(egg.y>maxY){egg.y=maxY;if(egg.vy>0){egg.vr+=egg.vx*0.004;egg.vy=-egg.vy*e;egg.wobble=Math.min(1,egg.wobble+0.5);}}
+  egg.wobble*=Math.exp(-4*dt);
+
+  if(air){
+    const prev=egg.flipT; egg.flipT+=dt/0.62;
+    if(prev<0.5&&egg.flipT>=0.5)egg.up=1-egg.up;
+    if(egg.flipT>=1){egg.flipT=-1;egg.wobble=1;
+      const c=egg.cook[1-egg.up];
+      toast(c<GOLD_LO-25?'아직 덜 익었어요':c<GOLD_LO?'조금 더':c<=GOLD_HI?'노릇노릇!':c<BURNT?'좀 진해요':'탔어요…');
+    }
+  }else if(!finished){
+    const down=1-egg.up; egg.cook[down]+=COOK_RATE*dt;
+  }
+  // HUD
+  for(const [i,id] of [[0,'A'],[1,'B']]){
+    const c=egg.cook[i];
+    $('fill'+id).style.width=Math.min(100,c/120*100)+'%';
+    $('fill'+id).style.background=rgb(brown(Math.max(30,c)));
+    $('bar'+id).classList.toggle('up',egg.up===i);
+  }
+  const ready=egg.cook[0]>=GOLD_LO&&egg.cook[1]>=GOLD_LO;
+  $('serveBtn').hidden=!ready||finished;
+  if(!finished&&(egg.cook[0]>=BURNT+30||egg.cook[1]>=BURNT+30))serve();
+}
+
+// ---------- drawing ----------
+function drawPan(){
+  const m=Math.min(W,H)*0.06;
+  ctx.fillStyle='#0f0e0d';ctx.fillRect(0,0,W,H);
+  // rim
+  const rimG=ctx.createLinearGradient(0,0,W,H);rimG.addColorStop(0,'#4a4541');rimG.addColorStop(.5,'#1a1817');rimG.addColorStop(1,'#3b3734');
+  ctx.fillStyle=rimG;rr(4,4,W-8,H-8,m*1.2);ctx.fill();
+  // surface
+  const sg=ctx.createRadialGradient(W*0.5,H*0.5,10,W*0.5,H*0.5,Math.max(W,H)*0.7);
+  sg.addColorStop(0,'#2b2826');sg.addColorStop(1,'#141312');
+  ctx.fillStyle=sg;rr(m,m,W-2*m,H-2*m,m*0.7);ctx.fill();
+  ctx.save();rr(m,m,W-2*m,H-2*m,m*0.7);ctx.clip();
+  // oil sheen shifts with tilt
+  const ox=W*0.5-gx*0.02, oy=H*0.42-gy*0.02;
+  const og=ctx.createRadialGradient(ox,oy,0,ox,oy,Math.min(W,H)*0.55);
+  og.addColorStop(0,'rgba(255,214,140,0.10)');og.addColorStop(.6,'rgba(255,214,140,0.03)');og.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=og;ctx.fillRect(0,0,W,H);
+  // oil droplets
+  for(const d of drops){ctx.beginPath();ctx.arc(d[0]*W,d[1]*H,d[2],0,Math.PI*2);ctx.fillStyle='rgba(255,230,170,0.07)';ctx.fill();
+    ctx.beginPath();ctx.arc(d[0]*W-d[2]*.3,d[1]*H-d[2]*.3,d[2]*.35,0,Math.PI*2);ctx.fillStyle='rgba(255,255,255,0.10)';ctx.fill();}
+  ctx.restore();
+  // inner wall shadow
+  ctx.strokeStyle='rgba(0,0,0,0.6)';ctx.lineWidth=6;rr(m,m,W-2*m,H-2*m,m*0.7);ctx.stroke();
+}
+const drops=Array.from({length:26},()=>[Math.random()*.86+.07,Math.random()*.86+.07,2+Math.random()*7]);
+function rr(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+
+function drawEgg(t){
+  const r=egg.r;
+  let sy=1,lift=0;
+  if(egg.flipT>=0){const p=egg.flipT;sy=Math.max(0.04,Math.abs(Math.cos(Math.PI*p)));lift=Math.sin(Math.PI*p);}
+  const wob=1+Math.sin(t*0.03)*0.03*egg.wobble;
+  // shadow
+  ctx.save();ctx.translate(egg.x+lift*r*0.25,egg.y+r*0.08+lift*r*0.5);ctx.rotate(egg.rot);
+  ctx.scale(1-lift*0.15,(1-lift*0.15)*Math.max(.3,sy));
+  ctx.filter='blur('+(4+lift*10)+'px)';blobPath(r);ctx.fillStyle='rgba(0,0,0,'+(0.5-lift*0.25)+')';ctx.fill();ctx.filter='none';
+  ctx.restore();
+
+  ctx.save();ctx.translate(egg.x,egg.y-lift*r*0.35);
+  const s=1+lift*0.35;ctx.scale(s,s);
+  ctx.scale(1,sy*wob);ctx.rotate(egg.rot);
+  // white (top side colour = cook of that side if it was facing down)
+  const topCook=egg.cook[egg.up];
+  const base=brown(topCook);
+  const wg=ctx.createRadialGradient(0,0,r*0.2,0,0,r*1.1);
+  const edge=brown(Math.min(BURNT+40,topCook+(egg.up===1?25:0)+ (egg.cook[1-egg.up]>GOLD_LO? 20:0)));
+  if(egg.up===0){
+    wg.addColorStop(0,'#fffdf7');wg.addColorStop(.75,'#fbf4e6');wg.addColorStop(1,rgb(mix([251,244,230],edge,Math.min(1,egg.cook[1]/110))));
+  }else{
+    wg.addColorStop(0,rgb(mix(base,[255,250,238],0.25)));wg.addColorStop(.7,rgb(base));wg.addColorStop(1,rgb(edge));
+  }
+  blobPath(r);ctx.fillStyle=wg;ctx.fill();
+  ctx.lineWidth=2;ctx.strokeStyle='rgba(255,255,255,0.35)';ctx.stroke();
+  if(egg.up===0){
+    // yolk
+    const yr=r*0.36,yx=r*0.08,yy=-r*0.05;
+    ctx.beginPath();ctx.ellipse(yx,yy+yr*0.12,yr*1.05,yr*1.0,0,0,Math.PI*2);ctx.fillStyle='rgba(120,60,0,0.25)';ctx.fill();
+    const yg=ctx.createRadialGradient(yx-yr*.35,yy-yr*.4,yr*.1,yx,yy,yr);
+    const cooked=Math.min(1,egg.cook[0]/120);
+    yg.addColorStop(0,rgb(mix([255,226,120],[255,236,190],cooked)));yg.addColorStop(.6,rgb(mix([255,170,20],[245,190,90],cooked)));yg.addColorStop(1,rgb(mix([230,130,0],[220,160,70],cooked)));
+    ctx.beginPath();ctx.ellipse(yx,yy,yr,yr*0.96,0,0,Math.PI*2);ctx.fillStyle=yg;ctx.fill();
+    ctx.beginPath();ctx.ellipse(yx-yr*.35,yy-yr*.42,yr*.22,yr*.13,-.6,0,Math.PI*2);ctx.fillStyle='rgba(255,255,255,0.7)';ctx.fill();
+  }else{
+    // yolk bump seen from below
+    const yr=r*0.36,yx=-r*0.08,yy=-r*0.05;
+    const bg=ctx.createRadialGradient(yx,yy,0,yx,yy,yr*1.1);
+    bg.addColorStop(0,'rgba(255,240,200,0.35)');bg.addColorStop(1,'rgba(255,240,200,0)');
+    ctx.beginPath();ctx.arc(yx,yy,yr*1.1,0,Math.PI*2);ctx.fillStyle=bg;ctx.fill();
+    // lacy crispy spots
+    ctx.fillStyle=rgb(mix(base,[60,30,10],0.35));
+    for(let i=0;i<14;i++){const a=i*2.39,d=r*(0.55+0.35*((i*37)%10)/10);ctx.globalAlpha=Math.min(.6,topCook/200);
+      ctx.beginPath();ctx.arc(Math.cos(a)*d,Math.sin(a)*d*0.9,r*0.05,0,Math.PI*2);ctx.fill();}
+    ctx.globalAlpha=1;
+  }
+  ctx.restore();
+}
+
+// sizzle bubbles near the egg
+const bubbles=[];
+function drawBubbles(dt){
+  if(running&&egg.flipT<0&&!finished&&Math.random()<dt*28){
+    const a=Math.random()*Math.PI*2,d=egg.r*(0.95+Math.random()*0.25);
+    bubbles.push({x:egg.x+Math.cos(a)*d,y:egg.y+Math.sin(a)*d*0.92,t:0,s:1+Math.random()*2.5});
+  }
+  for(let i=bubbles.length-1;i>=0;i--){const b=bubbles[i];b.t+=dt;if(b.t>0.5){bubbles.splice(i,1);continue;}
+    ctx.beginPath();ctx.arc(b.x,b.y,b.s*(1+b.t*2),0,Math.PI*2);ctx.strokeStyle='rgba(255,240,200,'+(0.5-b.t)+')';ctx.lineWidth=1;ctx.stroke();}
+}
+
+let last=performance.now();
+function loop(now){
+  const dt=Math.min(0.033,(now-last)/1000);last=now;
+  if(running)step(dt);
+  drawPan();drawBubbles(dt);drawEgg(now);
+  requestAnimationFrame(loop);
+}
+
+// ---------- serve / result ----------
+function grade(c){return c<GOLD_LO?'덜익음':c<=GOLD_HI?'노릇':c<BURNT?'진함':'탐';}
+function serve(){
+  if(finished)return;finished=true;running=false;
+  const a=egg.cook[0],b=egg.cook[1],ga=grade(a),gb=grade(b);
+  let title,text;
+  if(ga==='노릇'&&gb==='노릇'){title='완벽한 계란후라이!';}
+  else if(ga==='탐'||gb==='탐'){title='앗, 탔어요';}
+  else if(ga==='덜익음'||gb==='덜익음'){title='조금 덜 익었어요';}
+  else title='맛있게 진한 맛';
+  text=`노른자면 ${Math.round(a)}% (${ga}) · 뒷면 ${Math.round(b)}% (${gb}) · 뒤집기 ${flips}번`;
+  $('resTitle').textContent=title;$('resText').textContent=text;$('result').hidden=false;$('serveBtn').hidden=true;
+}
+
+// ---------- boot ----------
+$('startBtn').addEventListener('click',async()=>{
+  const ok=await askSensors();
+  $('intro').hidden=true;reset();running=true;setTip();
+  try{navigator.wakeLock&&navigator.wakeLock.request('screen').catch(()=>{});}catch(_){}
+  setTimeout(()=>{
+    if(mode!=='sensor'){mode='touch';setTip();
+      toast(ok?'센서 신호가 없어요':'터치 모드');}
+  },1500);
+});
+$('serveBtn').addEventListener('click',serve);
+$('againBtn').addEventListener('click',()=>{$('result').hidden=true;reset();running=true;});
+addEventListener('resize',resize);
+resize();reset();requestAnimationFrame(loop);
+})();
+</script>
+</body></html>
