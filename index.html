@@ -370,7 +370,7 @@ function initSoft(cx,cy){
     for(let j=0;j<cnt;j++){
       const a=j/SP_S*Math.PI*2, kk=outlineK(a);
       const qx=Math.cos(a)*kk*0.98*rho*r, qy=Math.sin(a)*kk*0.92*0.98*rho*r;
-      P.push({qx,qy,x:cx+qx,y:cy+qy,vx:0,vy:0,z:0,vz:0,rho});
+      P.push({qx,qy,q0x:qx,q0y:qy,x:cx+qx,y:cy+qy,vx:0,vy:0,z:0,vz:0,rho});
     }
   }
   const nb=P.map(()=>[]);
@@ -384,7 +384,24 @@ function initSoft(cx,cy){
   soft.P=P;soft.nb=nb;soft.u=0;soft.theta=0;soft.cx=cx;soft.cy=cy;soft.vcx=soft.vcy=0;
   soft.yolk={x:cx+YX*r,y:cy+YY*r,vx:0,vy:0};soft.yz=0;soft.yzv=0;soft.ready=true;
 }
-function restQ(p){const y=p.qy-soft.qm[1];return [p.qx-soft.qm[0], soft.u?-y:y];}   // rest shape, mirrored after an odd number of flips
+function restQ(p){const y=p.qy-soft.qm[1];return [p.qx-soft.qm[0], soft.u?-y:y];}
+function restQ0(p){const y=p.q0y-soft.qm[1];return [p.q0x-soft.qm[0], soft.u?-y:y];}
+// cooked white is limp, not elastic: the rest shape creeps toward however it was pushed,
+// with only a faint memory of its original outline
+function softCreep(dt){
+  const P=soft.P,cs=Math.cos(-soft.theta),sn=Math.sin(-soft.theta),r=egg.r,lim=r*0.3;
+  const take=Math.min(1,1.6*dt), back=Math.min(1,0.18*dt);
+  for(const p of P){
+    const dx=p.x-soft.cx,dy=p.y-soft.cy;
+    const lx=cs*dx-sn*dy; let ly=sn*dx+cs*dy; if(soft.u)ly=-ly;
+    const tx=lx+soft.qm[0], ty=ly+soft.qm[1];
+    p.qx+=(tx-p.qx)*take; p.qy+=(ty-p.qy)*take;
+    p.qx+=(p.q0x-p.qx)*back; p.qy+=(p.q0y-p.qy)*back;
+    const ex=p.qx-p.q0x,ey=p.qy-p.q0y,e=Math.hypot(ex,ey);
+    if(e>lim){p.qx=p.q0x+ex*lim/e;p.qy=p.q0y+ey*lim/e;}
+  }
+  let mx=0,my=0;for(const p of P){mx+=p.qx;my+=p.qy;}soft.qm=[mx/P.length,my/P.length];
+}   // rest shape, mirrored after an odd number of flips
 function fitFrame(){
   const P=soft.P;let cx=0,cy=0,vx=0,vy=0;
   for(const p of P){cx+=p.x;cy+=p.y;vx+=p.vx;vy+=p.vy;}
@@ -398,8 +415,8 @@ function fitFrame(){
 }
 function softStep(dt,ax,ay,air){
   const P=soft.P,N=4,h=dt/N,r=egg.r;
-  const K=560, CD=5.5;                       // jelly: ~3.8 Hz, lightly damped
-  const KZ=150, KC=900, CZ=4.2;              // height waves across the white
+  const K=110, CD=26;                        // limp and heavily damped: sags and settles, no boing
+  const KZ=55, KC=260, CZ=16;                // height: slumps back flat slowly, no ringing
   const m=Math.min(W,H)*0.06, pad=r*0.03;
   const minX=m+pad,maxX=W-m-pad,minY=m+pad,maxY=H-m-pad;
   // an oiled pan still has a little stiction
@@ -422,11 +439,11 @@ function softStep(dt,ax,ay,air){
       const p=P[i];p.x+=p.vx*h;p.y+=p.vy*h;
       if(air)continue;
       let hit=0;
-      if(p.x<minX){hit=Math.max(hit,-p.vx);p.x=minX;if(p.vx<0)p.vx*=-0.12;p.vy*=0.9;}
-      if(p.x>maxX){hit=Math.max(hit,p.vx);p.x=maxX;if(p.vx>0)p.vx*=-0.12;p.vy*=0.9;}
-      if(p.y<minY){hit=Math.max(hit,-p.vy);p.y=minY;if(p.vy<0)p.vy*=-0.12;p.vx*=0.9;}
-      if(p.y>maxY){hit=Math.max(hit,p.vy);p.y=maxY;if(p.vy>0)p.vy*=-0.12;p.vx*=0.9;}
-      if(hit>0)p.vz+=Math.min(hit,900)*0.05*r/80;   // rim rides up the pan wall
+      if(p.x<minX){hit=Math.max(hit,-p.vx);p.x=minX;if(p.vx<0)p.vx=0;p.vy*=0.8;}
+      if(p.x>maxX){hit=Math.max(hit,p.vx);p.x=maxX;if(p.vx>0)p.vx=0;p.vy*=0.8;}
+      if(p.y<minY){hit=Math.max(hit,-p.vy);p.y=minY;if(p.vy<0)p.vy=0;p.vx*=0.8;}
+      if(p.y>maxY){hit=Math.max(hit,p.vy);p.y=maxY;if(p.vy>0)p.vy=0;p.vx*=0.8;}
+      if(hit>0)p.vz+=Math.min(hit,900)*0.04*r/80*p.rho*p.rho;   // rim rides up the pan wall
     }
     // height field: each point springs to flat and tugs its neighbours (ripples)
     for(let i=0;i<P.length;i++){
@@ -437,13 +454,14 @@ function softStep(dt,ax,ay,air){
     // yolk: a heavier blob on its own spring, lags and sloshes
     const Y=soft.yolk,yq=[YX*r-soft.qm[0],(soft.u?-1:1)*(YY*r-soft.qm[1])];
     const ygx=soft.cx+cs*yq[0]-sn*yq[1], ygy=soft.cy+sn*yq[0]+cs*yq[1];
-    Y.vx+=(220*(ygx-Y.x)-3.2*(Y.vx-soft.vcx))*h; Y.vy+=(220*(ygy-Y.y)-3.2*(Y.vy-soft.vcy))*h;
+    Y.vx+=(70*(ygx-Y.x)-9*(Y.vx-soft.vcx))*h; Y.vy+=(70*(ygy-Y.y)-9*(Y.vy-soft.vcy))*h;
     Y.x+=Y.vx*h;Y.y+=Y.vy*h;
     const lim=r*0.16,dxy=Math.hypot(Y.x-ygx,Y.y-ygy);
     if(dxy>lim){Y.x=ygx+(Y.x-ygx)*lim/dxy;Y.y=ygy+(Y.y-ygy)*lim/dxy;}
-    soft.yzv+=(-260*soft.yz-3.5*soft.yzv)*h;soft.yz+=soft.yzv*h;
+    soft.yzv+=(-110*soft.yz-11*soft.yzv)*h;soft.yz+=soft.yzv*h;
   }
   fitFrame();
+  softCreep(dt);
   // yolk dome bounces when the pan jerks
   const jerk=Math.hypot(ax,ay)/Math.min(W,H);
   soft.yzv+=(Math.random()-.5)*jerk*0.02;
@@ -457,10 +475,10 @@ function softLand(){
   soft.u=1-soft.u;
   const r=egg.r;
   for(const p of P){
-    p.vz+=r*(p.rho*p.rho*5.5-1.6);                  // middle slaps down, rim flaps up
-    p.vx+=(p.x-soft.cx)*2.2;p.vy+=(p.y-soft.cy)*2.2; // spreads out on impact
+    p.vz+=r*(p.rho*p.rho*2.2-1.2);                  // lands with a flop, rim settles last
+    p.vx+=(p.x-soft.cx)*1.6;p.vy+=(p.y-soft.cy)*1.6; // spreads out on impact and stays spread
   }
-  soft.yzv-=9;
+  soft.yzv-=5;
   fitFrame();
 }
 // per-particle offsets in the egg's own (unmirrored) frame, for the renderer
@@ -469,7 +487,7 @@ function softOffsets(out){
   for(let i=0;i<P.length;i++){
     const p=P[i],dx=p.x-soft.cx,dy=p.y-soft.cy;
     const lx=cs*dx-sn*dy, ly=sn*dx+cs*dy;
-    const [qx,qy]=restQ(p);
+    const [qx,qy]=restQ0(p);
     const ox=lx-qx, oy=ly-qy;
     // body three-coords: x same, y = -(2D y) before the base flip; base flip negates y and z
     out[i*3]=ox; out[i*3+1]=u?oy:-oy; out[i*3+2]=u?-p.z:p.z;
@@ -594,7 +612,7 @@ function make3D(){
   function deform(p){
     if(!soft.ready)return [0,0];
     const yo=softOffsets(offs);
-    const bend=Math.sin(Math.PI*p)*0.55*(soft.u?1:-1), r=egg.r;
+    const bend=Math.sin(Math.PI*p)*1.0*(soft.u?1:-1), r=egg.r;
     const pt=topMesh.geometry.attributes.position.array, pb=botMesh.geometry.attributes.position.array;
     const nv=restT.length/3;
     for(let v=0;v<nv;v++){
