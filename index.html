@@ -99,7 +99,7 @@ let W=0,H=0,DPR=1;
 function resize(){
   DPR=Math.min(window.devicePixelRatio||1,2);
   W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;ctx.setTransform(DPR,0,0,DPR,0,0);
-  egg.r=Math.min(W,H)*0.2;
+  egg.r=Math.min(W,H)*0.2;soft.ready=false;
   bakeShape();
   if(gl3d)gl3d.resize();
 }
@@ -208,14 +208,15 @@ function setTip(){
 function flip(){
   if(!running||egg.flipT>=0)return;
   egg.flipT=0; flips++; $('flipN').textContent=flips;
-  egg.vr+= (Math.random()-.5)*4;
-  egg.vx*=0.6; egg.vy*=0.6;
+  if(soft.ready){const spin=(Math.random()-.5)*2.5;
+    for(const p of soft.P){const dx=p.x-soft.cx,dy=p.y-soft.cy;
+      p.vx=soft.vcx*0.6+(p.vx-soft.vcx)*0.5-dy*spin;p.vy=soft.vcy*0.6+(p.vy-soft.vcy)*0.5+dx*spin;}}
   try{navigator.vibrate&&navigator.vibrate(18);}catch(_){}
 }
 function toast(t){const el=$('toast');el.textContent=t;el.classList.add('on');clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove('on'),900);}
 
 function reset(){
-  egg.x=W/2;egg.y=H*0.55;egg.vx=egg.vy=0;egg.rot=Math.random()*6;egg.vr=0;egg.up=0;egg.flipT=-1;egg.cook=[0,0];egg.wobble=0;
+  egg.x=W/2;egg.y=H*0.55;egg.vx=egg.vy=0;egg.rot=Math.random()*6;egg.vr=0;egg.up=0;egg.flipT=-1;egg.cook=[0,0];egg.wobble=0;soft.ready=false;
   flips=0;$('flipN').textContent='0';finished=false;if(gl3d)gl3d.reset();$('serveBtn').hidden=true;
 }
 
@@ -228,31 +229,12 @@ function step(dt){
     if(keys.ArrowLeft)ax-=k;if(keys.ArrowRight)ax+=k;if(keys.ArrowUp)ay-=k;if(keys.ArrowDown)ay+=k;
   }
   const air=egg.flipT>=0;
-  if(!air){
-    // oily pan: tiny static grip, low kinetic drag
-    const mag=Math.hypot(ax,ay), grip=Math.min(W,H)*0.25;
-    if(mag>grip||Math.hypot(egg.vx,egg.vy)>4){egg.vx+=ax*dt;egg.vy+=ay*dt;}
-    const drag_=Math.exp(-0.55*dt);egg.vx*=drag_;egg.vy*=drag_;
-    egg.vr*=Math.exp(-1.2*dt);
-    egg.vr+=(egg.vx*ay-egg.vy*ax)*0.0000004*dt;
-  }else{
-    egg.vx*=Math.exp(-0.3*dt);egg.vy*=Math.exp(-0.3*dt);
-  }
-  egg.x+=egg.vx*dt;egg.y+=egg.vy*dt;egg.rot+=egg.vr*dt;
-
-  // walls of the pan
-  const m=Math.min(W,H)*0.06, rr=egg.r*0.9, e=0.32;
-  const minX=m+rr,maxX=W-m-rr,minY=m+rr,maxY=H-m-rr;
-  if(egg.x<minX){egg.x=minX;if(egg.vx<0){egg.vr+=egg.vy*0.004;egg.vx=-egg.vx*e;egg.wobble=Math.min(1,egg.wobble+0.5);}}
-  if(egg.x>maxX){egg.x=maxX;if(egg.vx>0){egg.vr-=egg.vy*0.004;egg.vx=-egg.vx*e;egg.wobble=Math.min(1,egg.wobble+0.5);}}
-  if(egg.y<minY){egg.y=minY;if(egg.vy<0){egg.vr-=egg.vx*0.004;egg.vy=-egg.vy*e;egg.wobble=Math.min(1,egg.wobble+0.5);}}
-  if(egg.y>maxY){egg.y=maxY;if(egg.vy>0){egg.vr+=egg.vx*0.004;egg.vy=-egg.vy*e;egg.wobble=Math.min(1,egg.wobble+0.5);}}
-  egg.wobble*=Math.exp(-4*dt);
-
+  if(!soft.ready)initSoft(egg.x,egg.y);
+  softStep(dt,ax,ay,air);
   if(air){
-    const prev=egg.flipT; egg.flipT+=dt/0.62;
-    if(prev<0.5&&egg.flipT>=0.5)egg.up=1-egg.up;
-    if(egg.flipT>=1){egg.flipT=-1;egg.wobble=1;
+    egg.flipT+=dt/0.62;
+    if(egg.flipT>=1){egg.flipT=-1;egg.up=1-egg.up;softLand();
+      try{navigator.vibrate&&navigator.vibrate(12);}catch(_){}
       const c=egg.cook[1-egg.up];
       toast(c<GOLD_LO-25?'아직 덜 익었어요':c<GOLD_LO?'조금 더':c<=GOLD_HI?'노릇노릇!':c<BURNT?'좀 진해요':'탔어요…');
     }
@@ -304,9 +286,16 @@ function drawEgg(t){
   if(egg.flipT>=0){const p=egg.flipT;sy=Math.max(0.04,Math.abs(Math.cos(Math.PI*p)));lift=Math.sin(Math.PI*p);}
   const wob=1+Math.sin(t*0.03)*0.03*egg.wobble;
   // shadow
-  ctx.save();ctx.translate(egg.x+lift*r*0.25,egg.y+r*0.08+lift*r*0.5);ctx.rotate(egg.rot);
-  ctx.scale(1-lift*0.15,(1-lift*0.15)*Math.max(.3,sy)*(egg.up?-1:1));
-  ctx.filter='blur('+(4+lift*10)+'px)';blobPath(r);ctx.fillStyle='rgba(0,0,0,'+(0.5-lift*0.25)+')';ctx.fill();ctx.filter='none';
+  ctx.save();ctx.translate(egg.x+lift*r*0.25,egg.y+r*0.08+lift*r*0.5);
+  ctx.scale(1-lift*0.15,(1-lift*0.15)*Math.max(.3,sy));
+  ctx.filter='blur('+(4+lift*10)+'px)';
+  if(soft.ready){ctx.beginPath();
+    for(let j=0;j<=SP_S;j++){const p=soft.P[spIndex(SP_R,j)],x=p.x-soft.cx,y=p.y-soft.cy;
+      const q=soft.P[spIndex(SP_R,j+1)],x2=(x+q.x-soft.cx)/2,y2=(y+q.y-soft.cy)/2;
+      if(j===0)ctx.moveTo(x2,y2);else ctx.quadraticCurveTo(x,y,x2,y2);}
+    ctx.closePath();}
+  else{ctx.rotate(egg.rot);ctx.scale(1,egg.up?-1:1);blobPath(r);}
+  ctx.fillStyle='rgba(0,0,0,'+(0.5-lift*0.25)+')';ctx.fill();ctx.filter='none';
   ctx.restore();
   if(gl3d)return;
 
@@ -369,6 +358,128 @@ function loop(now){
   requestAnimationFrame(loop);
 }
 
+// ---------- soft-body egg (shape-matching jelly + height waves) ----------
+const SP_R=4, SP_S=18;                       // lattice: centre + 4 rings x 18
+const soft={qm:[0,0],ox:0,oy:0,P:[],nb:[],u:0,ready:false,yolk:null,yz:0,yzv:0,theta:0,cx:0,cy:0,vcx:0,vcy:0,flipU:0};
+const YX=0.08,YY=-0.05;                      // yolk centre (egg-radius units, y down)
+function spIndex(k,j){return k===0?0:1+(k-1)*SP_S+((j%SP_S)+SP_S)%SP_S;}
+function initSoft(cx,cy){
+  const r=egg.r,P=[];
+  for(let k=0;k<=SP_R;k++){
+    const rho=k/SP_R, cnt=k===0?1:SP_S;
+    for(let j=0;j<cnt;j++){
+      const a=j/SP_S*Math.PI*2, kk=outlineK(a);
+      const qx=Math.cos(a)*kk*0.98*rho*r, qy=Math.sin(a)*kk*0.92*0.98*rho*r;
+      P.push({qx,qy,x:cx+qx,y:cy+qy,vx:0,vy:0,z:0,vz:0,rho});
+    }
+  }
+  const nb=P.map(()=>[]);
+  for(let k=1;k<=SP_R;k++)for(let j=0;j<SP_S;j++){
+    const i=spIndex(k,j);
+    nb[i].push(spIndex(k,j-1),spIndex(k,j+1),spIndex(k-1,j));
+    if(k<SP_R)nb[i].push(spIndex(k+1,j));
+  }
+  for(let j=0;j<SP_S;j++)nb[0].push(spIndex(1,j));
+  let mx=0,my=0;for(const p of P){mx+=p.qx;my+=p.qy;}soft.qm=[mx/P.length,my/P.length];
+  soft.P=P;soft.nb=nb;soft.u=0;soft.theta=0;soft.cx=cx;soft.cy=cy;soft.vcx=soft.vcy=0;
+  soft.yolk={x:cx+YX*r,y:cy+YY*r,vx:0,vy:0};soft.yz=0;soft.yzv=0;soft.ready=true;
+}
+function restQ(p){const y=p.qy-soft.qm[1];return [p.qx-soft.qm[0], soft.u?-y:y];}   // rest shape, mirrored after an odd number of flips
+function fitFrame(){
+  const P=soft.P;let cx=0,cy=0,vx=0,vy=0;
+  for(const p of P){cx+=p.x;cy+=p.y;vx+=p.vx;vy+=p.vy;}
+  cx/=P.length;cy/=P.length;vx/=P.length;vy/=P.length;
+  let s=0,c=0;
+  for(const p of P){const [qx,qy]=restQ(p),dx=p.x-cx,dy=p.y-cy;c+=qx*dx+qy*dy;s+=qx*dy-qy*dx;}
+  soft.cx=cx;soft.cy=cy;soft.vcx=vx;soft.vcy=vy;soft.theta=Math.atan2(s,c);
+  // where the egg's modelling origin sits on screen (the lattice centroid is not at the origin)
+  const qx=-soft.qm[0],qy=soft.u?soft.qm[1]:-soft.qm[1],cs=Math.cos(soft.theta),sn=Math.sin(soft.theta);
+  soft.ox=cx+cs*qx-sn*qy;soft.oy=cy+sn*qx+cs*qy;
+}
+function softStep(dt,ax,ay,air){
+  const P=soft.P,N=4,h=dt/N,r=egg.r;
+  const K=560, CD=5.5;                       // jelly: ~3.8 Hz, lightly damped
+  const KZ=150, KC=900, CZ=4.2;              // height waves across the white
+  const m=Math.min(W,H)*0.06, pad=r*0.03;
+  const minX=m+pad,maxX=W-m-pad,minY=m+pad,maxY=H-m-pad;
+  // an oiled pan still has a little stiction
+  const still=Math.hypot(soft.vcx,soft.vcy)<5 && Math.hypot(ax,ay)<Math.min(W,H)*0.22;
+  for(let n=0;n<N;n++){
+    fitFrame();
+    const cs=Math.cos(soft.theta),sn=Math.sin(soft.theta);
+    for(let i=0;i<P.length;i++){
+      const p=P[i],[qx,qy]=restQ(p);
+      const gx_=soft.cx+cs*qx-sn*qy, gy_=soft.cy+sn*qx+cs*qy;
+      let fx=K*(gx_-p.x)-CD*(p.vx-soft.vcx), fy=K*(gy_-p.y)-CD*(p.vy-soft.vcy);
+      if(!air){
+        if(!still){fx+=ax;fy+=ay;}
+        const fr=Math.exp(-(still?6:0.5+0.55*p.rho)*h);   // thin rim drags a bit more than the thick middle
+        p.vx*=fr;p.vy*=fr;
+      }else{p.vx*=Math.exp(-0.25*h);p.vy*=Math.exp(-0.25*h);}
+      p.vx+=fx*h;p.vy+=fy*h;
+    }
+    for(let i=0;i<P.length;i++){
+      const p=P[i];p.x+=p.vx*h;p.y+=p.vy*h;
+      if(air)continue;
+      let hit=0;
+      if(p.x<minX){hit=Math.max(hit,-p.vx);p.x=minX;if(p.vx<0)p.vx*=-0.12;p.vy*=0.9;}
+      if(p.x>maxX){hit=Math.max(hit,p.vx);p.x=maxX;if(p.vx>0)p.vx*=-0.12;p.vy*=0.9;}
+      if(p.y<minY){hit=Math.max(hit,-p.vy);p.y=minY;if(p.vy<0)p.vy*=-0.12;p.vx*=0.9;}
+      if(p.y>maxY){hit=Math.max(hit,p.vy);p.y=maxY;if(p.vy>0)p.vy*=-0.12;p.vx*=0.9;}
+      if(hit>0)p.vz+=Math.min(hit,900)*0.05*r/80;   // rim rides up the pan wall
+    }
+    // height field: each point springs to flat and tugs its neighbours (ripples)
+    for(let i=0;i<P.length;i++){
+      const p=P[i],nb=soft.nb[i];let avg=0;for(const j of nb)avg+=P[j].z;avg/=nb.length;
+      p.vz+=(-KZ*p.z+KC*(avg-p.z)-CZ*p.vz)*h;
+    }
+    for(const p of P){p.z+=p.vz*h;const lim=r*0.35;if(p.z>lim){p.z=lim;p.vz=0;}if(p.z<-lim){p.z=-lim;p.vz=0;}}
+    // yolk: a heavier blob on its own spring, lags and sloshes
+    const Y=soft.yolk,yq=[YX*r-soft.qm[0],(soft.u?-1:1)*(YY*r-soft.qm[1])];
+    const ygx=soft.cx+cs*yq[0]-sn*yq[1], ygy=soft.cy+sn*yq[0]+cs*yq[1];
+    Y.vx+=(220*(ygx-Y.x)-3.2*(Y.vx-soft.vcx))*h; Y.vy+=(220*(ygy-Y.y)-3.2*(Y.vy-soft.vcy))*h;
+    Y.x+=Y.vx*h;Y.y+=Y.vy*h;
+    const lim=r*0.16,dxy=Math.hypot(Y.x-ygx,Y.y-ygy);
+    if(dxy>lim){Y.x=ygx+(Y.x-ygx)*lim/dxy;Y.y=ygy+(Y.y-ygy)*lim/dxy;}
+    soft.yzv+=(-260*soft.yz-3.5*soft.yzv)*h;soft.yz+=soft.yzv*h;
+  }
+  fitFrame();
+  // yolk dome bounces when the pan jerks
+  const jerk=Math.hypot(ax,ay)/Math.min(W,H);
+  soft.yzv+=(Math.random()-.5)*jerk*0.02;
+  egg.x=soft.cx;egg.y=soft.cy;egg.rot=soft.theta;egg.vx=soft.vcx;egg.vy=soft.vcy;
+}
+// mirror the body across the flip axis when it lands, then splat
+function softLand(){
+  const P=soft.P,cy=soft.oy,vcy=soft.vcy;
+  for(const p of P){p.y=cy-(p.y-cy);p.vy=vcy-(p.vy-vcy);p.z=-p.z;p.vz=-p.vz;}
+  const Y=soft.yolk;Y.y=cy-(Y.y-cy);Y.vy=vcy-(Y.vy-vcy);
+  soft.u=1-soft.u;
+  const r=egg.r;
+  for(const p of P){
+    p.vz+=r*(p.rho*p.rho*5.5-1.6);                  // middle slaps down, rim flaps up
+    p.vx+=(p.x-soft.cx)*2.2;p.vy+=(p.y-soft.cy)*2.2; // spreads out on impact
+  }
+  soft.yzv-=9;
+  fitFrame();
+}
+// per-particle offsets in the egg's own (unmirrored) frame, for the renderer
+function softOffsets(out){
+  const P=soft.P,cs=Math.cos(-soft.theta),sn=Math.sin(-soft.theta),u=soft.u;
+  for(let i=0;i<P.length;i++){
+    const p=P[i],dx=p.x-soft.cx,dy=p.y-soft.cy;
+    const lx=cs*dx-sn*dy, ly=sn*dx+cs*dy;
+    const [qx,qy]=restQ(p);
+    const ox=lx-qx, oy=ly-qy;
+    // body three-coords: x same, y = -(2D y) before the base flip; base flip negates y and z
+    out[i*3]=ox; out[i*3+1]=u?oy:-oy; out[i*3+2]=u?-p.z:p.z;
+  }
+  const Y=soft.yolk,r=egg.r,dx=Y.x-soft.cx,dy=Y.y-soft.cy;
+  const lx=cs*dx-sn*dy, ly=sn*dx+cs*dy;
+  const qx=YX*r-soft.qm[0], qy=(u?-1:1)*(YY*r-soft.qm[1]);
+  return [lx-qx, u?(ly-qy):-(ly-qy)];
+}
+
 // ---------- 3D egg (WebGL) ----------
 function make3D(){
   if(typeof THREE==='undefined')return null;
@@ -383,7 +494,8 @@ function make3D(){
   const key=new THREE.DirectionalLight(0xfff1dc,0.68);key.position.set(-0.45,0.65,1);scene.add(key);
   const rim=new THREE.DirectionalLight(0xffc98a,0.25);rim.position.set(0.7,-0.5,0.4);scene.add(rim);
 
-  const outer=new THREE.Group(), inner=new THREE.Group();outer.add(inner);scene.add(outer);
+  const outer=new THREE.Group(), inner=new THREE.Group(), body=new THREE.Group();outer.add(inner);inner.add(body);scene.add(outer);
+  let restT,restB,wIdx,wW,yolkBase,offs=new Float32Array(200*3);
   const RINGS=44,SEGS=200;
   const YX=0.08,YY=-0.05,YR=0.36; // yolk centre/radius in egg-radius units (2D convention, y down)
   let topMesh=null,botMesh=null,yolk=null,meta=null,builtR=0;
@@ -396,10 +508,10 @@ function make3D(){
   function fbm(x,y){return vnoise(x,y)*0.55+vnoise(x*2.3,y*2.3)*0.3+vnoise(x*5.1,y*5.1)*0.15;}
 
   function build(r){
-    if(topMesh){inner.remove(topMesh,botMesh,yolk);topMesh.geometry.dispose();botMesh.geometry.dispose();yolk.geometry.dispose();}
+    if(topMesh){body.remove(topMesh,botMesh,yolk);topMesh.geometry.dispose();botMesh.geometry.dispose();yolk.geometry.dispose();}
     const T=r*0.09, n=(RINGS+1)*SEGS;
     const posT=new Float32Array(n*3),posB=new Float32Array(n*3);
-    meta=[];
+    meta=[];wIdx=new Int16Array(n*4);wW=new Float32Array(n*4);
     for(let i=0;i<=RINGS;i++){
       const rho=Math.sin(i/RINGS*Math.PI/2);           // denser rings near the rim
       for(let j=0;j<SEGS;j++){
@@ -417,6 +529,12 @@ function make3D(){
         posT[idx]=ex*r;posT[idx+1]=-ey*r;posT[idx+2]=zt;
         posB[idx]=ex*r;posB[idx+1]=-ey*r;posB[idx+2]=zb;
         meta.push({rho,lace,thick});
+        { // bilinear weights onto the soft-body lattice
+          const vi=i*SEGS+j,kf=Math.min(SP_R-1e-6,rho*SP_R),k=Math.floor(kf),t=kf-k;
+          const jf=j/SEGS*SP_S,j0=Math.floor(jf),f=jf-j0;
+          wIdx[vi*4]=spIndex(k,j0);wIdx[vi*4+1]=spIndex(k,j0+1);wIdx[vi*4+2]=spIndex(k+1,j0);wIdx[vi*4+3]=spIndex(k+1,j0+1);
+          wW[vi*4]=(1-t)*(1-f);wW[vi*4+1]=(1-t)*f;wW[vi*4+2]=t*(1-f);wW[vi*4+3]=t*f;
+        }
       }
     }
     const ind=[],indB=[];
@@ -424,13 +542,9 @@ function make3D(){
       const a=i*SEGS+j,b=i*SEGS+(j+1)%SEGS,c=(i+1)*SEGS+j,d=(i+1)*SEGS+(j+1)%SEGS;
       ind.push(a,b,c,b,d,c); indB.push(a,c,b,b,c,d);
     }
+    restT=posT.slice();restB=posB.slice();
     const mk=(pos,idx)=>{const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));
-      g.setAttribute('color',new THREE.BufferAttribute(new Float32Array(n*3),3));g.setIndex(idx);g.computeVertexNormals();
-      // the centre ring is one point repeated: give it a single averaged normal
-      const nr=g.attributes.normal.array;let sx=0,sy=0,sz=0;
-      for(let j=0;j<SEGS;j++){sx+=nr[j*3];sy+=nr[j*3+1];sz+=nr[j*3+2];}
-      const l=Math.hypot(sx,sy,sz)||1;for(let j=0;j<SEGS;j++){nr[j*3]=sx/l;nr[j*3+1]=sy/l;nr[j*3+2]=sz/l;}
-      return g;};
+      g.setAttribute('color',new THREE.BufferAttribute(new Float32Array(n*3),3));g.setIndex(idx);normals(g);return g;};
     const mat=()=>new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.42,metalness:0});
     topMesh=new THREE.Mesh(mk(posT,ind),mat());
     botMesh=new THREE.Mesh(mk(posB,indB),mat());
@@ -439,7 +553,7 @@ function make3D(){
     yolk=new THREE.Mesh(yg,new THREE.MeshPhysicalMaterial({color:0xffae1c,roughness:0.22,clearcoat:1,clearcoatRoughness:0.12}));
     yolk.scale.set(1.04,1,0.5);
     yolk.position.set(YX*r,-YY*r,T*1.0);
-    inner.add(topMesh,botMesh,yolk);
+    body.add(topMesh,botMesh,yolk);yolkBase=yolk.position.clone();
     builtR=r;lastCook=[-99,-99];
   }
 
@@ -470,23 +584,50 @@ function make3D(){
     yolk.material.roughness=0.22+0.55*t;yolk.material.clearcoat=1-t*0.9;
   }
 
-  let flipBase=0;
+  function normals(g){
+    g.computeVertexNormals();
+    // the centre ring is one point repeated: give it a single averaged normal
+    const nr=g.attributes.normal.array;let sx=0,sy=0,sz=0;
+    for(let j=0;j<SEGS;j++){sx+=nr[j*3];sy+=nr[j*3+1];sz+=nr[j*3+2];}
+    const l=Math.hypot(sx,sy,sz)||1;for(let j=0;j<SEGS;j++){nr[j*3]=sx/l;nr[j*3+1]=sy/l;nr[j*3+2]=sz/l;}
+  }
+  function deform(p){
+    if(!soft.ready)return [0,0];
+    const yo=softOffsets(offs);
+    const bend=Math.sin(Math.PI*p)*0.55*(soft.u?1:-1), r=egg.r;
+    const pt=topMesh.geometry.attributes.position.array, pb=botMesh.geometry.attributes.position.array;
+    const nv=restT.length/3;
+    for(let v=0;v<nv;v++){
+      let dx=0,dy=0,dz=0;
+      for(let k=0;k<4;k++){const w=wW[v*4+k];if(w===0)continue;const i=wIdx[v*4+k]*3;dx+=offs[i]*w;dy+=offs[i+1]*w;dz+=offs[i+2]*w;}
+      const o=v*3, yb=restT[o+1];
+      dz+=bend*yb*yb/r;                               // sheet sags as it tumbles through the air
+      pt[o]=restT[o]+dx;pt[o+1]=restT[o+1]+dy;pt[o+2]=restT[o+2]+dz;
+      pb[o]=restB[o]+dx;pb[o+1]=restB[o+1]+dy;pb[o+2]=restB[o+2]+dz;
+    }
+    topMesh.geometry.attributes.position.needsUpdate=true;botMesh.geometry.attributes.position.needsUpdate=true;
+    normals(topMesh.geometry);normals(botMesh.geometry);
+    return yo;
+  }
   return {
     resize(){renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));renderer.setSize(W,H,false);
       cam.left=0;cam.right=W;cam.top=0;cam.bottom=-H;cam.updateProjectionMatrix();},
-    reset(){flipBase=0;lastCook=[-99,-99];},
+    reset(){lastCook=[-99,-99];},
     render(t){
       if(Math.abs(builtR-egg.r)>0.5)build(egg.r);
       paint();
       let p=0,lift=0;
       if(egg.flipT>=0){p=egg.flipT;lift=Math.sin(Math.PI*p);}
-      // flips counts started flips; settled angle = π·flips
-      const ang=Math.PI*(egg.flipT>=0?flips-1+p:flips);
-      outer.position.set(egg.x,-(egg.y-lift*egg.r*0.35),0);
-      outer.rotation.set(ang,0,0);
+      const yo=deform(p);
+      const ox=soft.ready?soft.ox:egg.x, oy=soft.ready?soft.oy:egg.y;
+      outer.position.set(ox,-(oy-lift*egg.r*0.35),0);
+      outer.rotation.set(Math.PI*p,0,0);              // tumble about the screen's horizontal axis
       const s=1+lift*0.35;outer.scale.set(s,s,s);
       inner.rotation.z=-egg.rot;
-      inner.scale.z=1+Math.sin(t*0.03)*0.12*egg.wobble;
+      body.rotation.set(Math.PI*soft.u,0,0);
+      const yz=Math.max(-0.6,Math.min(0.6,soft.yz)), cz=soft.ready?offs[2]:0;
+      yolk.position.set(yolkBase.x+yo[0],yolkBase.y+yo[1],yolkBase.z+cz);
+      yolk.scale.set(1.04*(1-yz*0.22),1-yz*0.22,0.5*(1+yz));
       renderer.render(scene,cam);
     }
   };
