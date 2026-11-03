@@ -16,7 +16,8 @@
 html,body{height:100%;margin:0;overflow:hidden;background:var(--rim);color:var(--text);font-family:var(--body);
   -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:none;overscroll-behavior:none}
 [hidden]{display:none!important}
-#c{position:fixed;inset:0;width:100%;height:100%;display:block}
+#c,#g{position:fixed;inset:0;width:100%;height:100%;display:block}
+#g{pointer-events:none}
 .hud{position:fixed;left:0;right:0;top:0;padding-top:calc(env(safe-area-inset-top,0px) + 14px);
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
   display:flex;gap:12px;align-items:flex-start;justify-content:space-between;pointer-events:none}
@@ -50,6 +51,7 @@ button:focus-visible{outline:3px solid var(--cream);outline-offset:2px}
 </style>
 
 <canvas id="c"></canvas>
+<canvas id="g"></canvas>
 
 <div class="hud">
   <div class="bars">
@@ -88,6 +90,7 @@ button:focus-visible{outline:3px solid var(--cream);outline-offset:2px}
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (() => {
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
@@ -98,12 +101,14 @@ function resize(){
   W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;ctx.setTransform(DPR,0,0,DPR,0,0);
   egg.r=Math.min(W,H)*0.2;
   bakeShape();
+  if(gl3d)gl3d.resize();
 }
 
 // ---------- state ----------
 const egg={x:0,y:0,vx:0,vy:0,rot:0,vr:0,r:80,up:0, // up: 0 = 노른자면 위, 1 = 뒷면 위
   flipT:-1, cook:[0,0], wobble:0};
 let gx=0, gy=0;          // tilt-derived acceleration (px/s²)
+let gl3d=null;
 let running=false, flips=0, mode='none', lastSensor=0, finished=false;
 const COOK_RATE=8.5;      // % per second on the down side
 const GOLD_LO=70, GOLD_HI=100, BURNT=130;
@@ -111,10 +116,14 @@ const GOLD_LO=70, GOLD_HI=100, BURNT=130;
 // irregular white outline, baked per size
 let shape=[];
 function bakeShape(){
-  shape=[];const n=48,seed=[0.13,0.29,0.07,0.21,0.17];
-  for(let i=0;i<n;i++){const a=i/n*Math.PI*2;
-    let k=1+0.09*Math.sin(a*3+seed[0]*10)+0.06*Math.sin(a*5+seed[1]*20)+0.04*Math.sin(a*7+1.3)+0.03*Math.sin(a*11+seed[2]*30);
+  shape=[];const n=120;
+  for(let i=0;i<n;i++){const a=i/n*Math.PI*2,k=outlineK(a);
     shape.push([Math.cos(a)*k,Math.sin(a)*k*0.92]);}
+}
+// organic outline of the white: a few broad lobes plus fine frilly detail
+function outlineK(a){
+  return 1+0.09*Math.sin(a*3+1.3)+0.06*Math.sin(a*5+5.8)+0.04*Math.sin(a*7+1.3)+0.03*Math.sin(a*11+2.1)
+    +0.014*Math.sin(a*17+0.4)+0.006*Math.sin(a*29+3.3)+0.0025*Math.sin(a*47+1.9);
 }
 function blobPath(r){
   ctx.beginPath();
@@ -207,7 +216,7 @@ function toast(t){const el=$('toast');el.textContent=t;el.classList.add('on');cl
 
 function reset(){
   egg.x=W/2;egg.y=H*0.55;egg.vx=egg.vy=0;egg.rot=Math.random()*6;egg.vr=0;egg.up=0;egg.flipT=-1;egg.cook=[0,0];egg.wobble=0;
-  flips=0;$('flipN').textContent='0';finished=false;$('serveBtn').hidden=true;
+  flips=0;$('flipN').textContent='0';finished=false;if(gl3d)gl3d.reset();$('serveBtn').hidden=true;
 }
 
 function step(dt){
@@ -296,9 +305,10 @@ function drawEgg(t){
   const wob=1+Math.sin(t*0.03)*0.03*egg.wobble;
   // shadow
   ctx.save();ctx.translate(egg.x+lift*r*0.25,egg.y+r*0.08+lift*r*0.5);ctx.rotate(egg.rot);
-  ctx.scale(1-lift*0.15,(1-lift*0.15)*Math.max(.3,sy));
+  ctx.scale(1-lift*0.15,(1-lift*0.15)*Math.max(.3,sy)*(egg.up?-1:1));
   ctx.filter='blur('+(4+lift*10)+'px)';blobPath(r);ctx.fillStyle='rgba(0,0,0,'+(0.5-lift*0.25)+')';ctx.fill();ctx.filter='none';
   ctx.restore();
+  if(gl3d)return;
 
   ctx.save();ctx.translate(egg.x,egg.y-lift*r*0.35);
   const s=1+lift*0.35;ctx.scale(s,s);
@@ -355,7 +365,131 @@ function loop(now){
   const dt=Math.min(0.033,(now-last)/1000);last=now;
   if(running)step(dt);
   drawPan();drawBubbles(dt);drawEgg(now);
+  if(gl3d)gl3d.render(now);
   requestAnimationFrame(loop);
+}
+
+// ---------- 3D egg (WebGL) ----------
+function make3D(){
+  if(typeof THREE==='undefined')return null;
+  const gcv=document.getElementById('g');
+  let renderer;
+  try{renderer=new THREE.WebGLRenderer({canvas:gcv,antialias:true,alpha:true});}catch(_){return null;}
+  renderer.setClearColor(0x000000,0);
+  const scene=new THREE.Scene();
+  const cam=new THREE.OrthographicCamera(0,1,0,-1,-5000,5000);
+  cam.position.z=1000;
+  scene.add(new THREE.HemisphereLight(0xfff4e0,0x3a2a1a,0.5));
+  const key=new THREE.DirectionalLight(0xfff1dc,0.68);key.position.set(-0.45,0.65,1);scene.add(key);
+  const rim=new THREE.DirectionalLight(0xffc98a,0.25);rim.position.set(0.7,-0.5,0.4);scene.add(rim);
+
+  const outer=new THREE.Group(), inner=new THREE.Group();outer.add(inner);scene.add(outer);
+  const RINGS=44,SEGS=200;
+  const YX=0.08,YY=-0.05,YR=0.36; // yolk centre/radius in egg-radius units (2D convention, y down)
+  let topMesh=null,botMesh=null,yolk=null,meta=null,builtR=0;
+
+  // cheap deterministic value noise for bubbles and lacy browning
+  function hn(x,y){const v=Math.sin(x*127.1+y*311.7)*43758.5453;return v-Math.floor(v);}
+  function vnoise(x,y){const ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy;
+    const u=fx*fx*(3-2*fx),v=fy*fy*(3-2*fy);
+    return (hn(ix,iy)*(1-u)+hn(ix+1,iy)*u)*(1-v)+(hn(ix,iy+1)*(1-u)+hn(ix+1,iy+1)*u)*v;}
+  function fbm(x,y){return vnoise(x,y)*0.55+vnoise(x*2.3,y*2.3)*0.3+vnoise(x*5.1,y*5.1)*0.15;}
+
+  function build(r){
+    if(topMesh){inner.remove(topMesh,botMesh,yolk);topMesh.geometry.dispose();botMesh.geometry.dispose();yolk.geometry.dispose();}
+    const T=r*0.09, n=(RINGS+1)*SEGS;
+    const posT=new Float32Array(n*3),posB=new Float32Array(n*3);
+    meta=[];
+    for(let i=0;i<=RINGS;i++){
+      const rho=Math.sin(i/RINGS*Math.PI/2);           // denser rings near the rim
+      for(let j=0;j<SEGS;j++){
+        const a=j/SEGS*Math.PI*2,k=outlineK(a);
+        const ex=Math.cos(a)*k*rho, ey=Math.sin(a)*k*0.92*rho; // unit-radius coords, y down
+        const dx=ex-YX,dy=ey-YY,d2=dx*dx+dy*dy;
+        const fall=Math.sqrt(Math.max(0,1-Math.pow(rho,6)));
+        const thick=Math.exp(-d2/(2*0.42*0.42));         // thick albumen around the yolk
+        const bub=fbm(ex*6+3,ey*6+7);
+        const lace=fbm(ex*9+11,ey*9+2);
+        let zt=T*(0.3+0.55*(1-rho*rho)+0.9*thick+0.18*(bub-0.5)*rho)*fall;
+        let zb=-T*(0.22+0.9*Math.exp(-d2/(2*0.3*0.3))+0.08*(lace-0.5))*fall;
+        if(i===RINGS){zt=0;zb=0;}
+        const idx=(i*SEGS+j)*3;
+        posT[idx]=ex*r;posT[idx+1]=-ey*r;posT[idx+2]=zt;
+        posB[idx]=ex*r;posB[idx+1]=-ey*r;posB[idx+2]=zb;
+        meta.push({rho,lace,thick});
+      }
+    }
+    const ind=[],indB=[];
+    for(let i=0;i<RINGS;i++)for(let j=0;j<SEGS;j++){
+      const a=i*SEGS+j,b=i*SEGS+(j+1)%SEGS,c=(i+1)*SEGS+j,d=(i+1)*SEGS+(j+1)%SEGS;
+      ind.push(a,b,c,b,d,c); indB.push(a,c,b,b,c,d);
+    }
+    const mk=(pos,idx)=>{const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+      g.setAttribute('color',new THREE.BufferAttribute(new Float32Array(n*3),3));g.setIndex(idx);g.computeVertexNormals();
+      // the centre ring is one point repeated: give it a single averaged normal
+      const nr=g.attributes.normal.array;let sx=0,sy=0,sz=0;
+      for(let j=0;j<SEGS;j++){sx+=nr[j*3];sy+=nr[j*3+1];sz+=nr[j*3+2];}
+      const l=Math.hypot(sx,sy,sz)||1;for(let j=0;j<SEGS;j++){nr[j*3]=sx/l;nr[j*3+1]=sy/l;nr[j*3+2]=sz/l;}
+      return g;};
+    const mat=()=>new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.42,metalness:0});
+    topMesh=new THREE.Mesh(mk(posT,ind),mat());
+    botMesh=new THREE.Mesh(mk(posB,indB),mat());
+    const yg=new THREE.SphereGeometry(r*YR,72,36,0,Math.PI*2,0,Math.PI/2);
+    yg.rotateX(Math.PI/2);
+    yolk=new THREE.Mesh(yg,new THREE.MeshPhysicalMaterial({color:0xffae1c,roughness:0.22,clearcoat:1,clearcoatRoughness:0.12}));
+    yolk.scale.set(1.04,1,0.5);
+    yolk.position.set(YX*r,-YY*r,T*1.0);
+    inner.add(topMesh,botMesh,yolk);
+    builtR=r;lastCook=[-99,-99];
+  }
+
+  let lastCook=[-99,-99];
+  function paint(){
+    const cA=egg.cook[0],cB=egg.cook[1];
+    if(Math.abs(cA-lastCook[0])<0.8&&Math.abs(cB-lastCook[1])<0.8)return;
+    lastCook=[cA,cB];
+    const ct=topMesh.geometry.attributes.color.array, cb=botMesh.geometry.attributes.color.array;
+    for(let v=0;v<meta.length;v++){
+      const m=meta[v],o=v*3;
+      // top (yolk side): glossy white, browns when it faces down; rim crisps while the other side cooks
+      let effA=cA*(0.75+0.55*Math.pow(m.rho,3))+(m.lace-0.5)*40*m.rho*Math.min(1,cA/40);
+      effA=Math.max(effA,cB*0.45*Math.pow(m.rho,5));
+      let col=brown(Math.max(0,effA));
+      const glass=(1-m.thick)*(1-Math.min(1,cA/50))*0.06;
+      ct[o]=col[0]/255-glass;ct[o+1]=col[1]/255-glass;ct[o+2]=col[2]/255-glass*0.6;
+      let effB=cB*(0.8+0.5*Math.pow(m.rho,3))+(m.lace-0.5)*55*Math.min(1,cB/35)*(0.4+m.rho);
+      effB=Math.max(effB,cA*0.45*Math.pow(m.rho,5));
+      col=brown(Math.max(0,effB));
+      cb[o]=col[0]/255;cb[o+1]=col[1]/255;cb[o+2]=col[2]/255;
+    }
+    topMesh.geometry.attributes.color.needsUpdate=true;
+    botMesh.geometry.attributes.color.needsUpdate=true;
+    // yolk sets as its side cooks face-down
+    const t=Math.min(1,cA/120);
+    yolk.material.color.setRGB(1-0.05*t,0.68+0.12*t,0.11+0.3*t);
+    yolk.material.roughness=0.22+0.55*t;yolk.material.clearcoat=1-t*0.9;
+  }
+
+  let flipBase=0;
+  return {
+    resize(){renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));renderer.setSize(W,H,false);
+      cam.left=0;cam.right=W;cam.top=0;cam.bottom=-H;cam.updateProjectionMatrix();},
+    reset(){flipBase=0;lastCook=[-99,-99];},
+    render(t){
+      if(Math.abs(builtR-egg.r)>0.5)build(egg.r);
+      paint();
+      let p=0,lift=0;
+      if(egg.flipT>=0){p=egg.flipT;lift=Math.sin(Math.PI*p);}
+      // flips counts started flips; settled angle = π·flips
+      const ang=Math.PI*(egg.flipT>=0?flips-1+p:flips);
+      outer.position.set(egg.x,-(egg.y-lift*egg.r*0.35),0);
+      outer.rotation.set(ang,0,0);
+      const s=1+lift*0.35;outer.scale.set(s,s,s);
+      inner.rotation.z=-egg.rot;
+      inner.scale.z=1+Math.sin(t*0.03)*0.12*egg.wobble;
+      renderer.render(scene,cam);
+    }
+  };
 }
 
 // ---------- serve / result ----------
@@ -385,6 +519,7 @@ $('startBtn').addEventListener('click',async()=>{
 $('serveBtn').addEventListener('click',serve);
 $('againBtn').addEventListener('click',()=>{$('result').hidden=true;reset();running=true;});
 addEventListener('resize',resize);
+try{gl3d=make3D();}catch(err){gl3d=null;}
 resize();reset();requestAnimationFrame(loop);
 })();
 </script>
